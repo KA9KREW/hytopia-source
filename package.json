@@ -1,0 +1,10 @@
+{
+  "name": "hytopia-source-monorepo",
+  "private": true,
+  "workspaces": [
+    "assets/release",
+    "sdk",
+    "sdk-examples",
+    "sdk-examples/*"
+  ]
+}

@@ -1,0 +1,357 @@
+<!-- Scene UI Templates -->
+<template id="entity-nameplate-template">
+  <div class="entity-nameplate">
+    <div class="entity-nameplate-alert">!</div>
+    <div class="entity-nameplate-name">A Test Mob</div>
+    <div class="entity-nameplate-interact"></div>
+    <div class="entity-nameplate-level">Lvl 12</div>
+    <div class="entity-nameplate-health-bar">
+      <div class="entity-nameplate-health-bar-fill"></div>
+    </div>
+  </div>
+</template>
+
+<script>
+  // Track which entity class names should show alerts
+  let entityAlertClassNames = new Set();
+  
+  // Simple callback registry for alert updates
+  let alertUpdateCallbacks = [];
+
+  // Handle entity alert updates from GamePlayer
+  hytopia.onData(data => {
+    if (data.type === 'addEntityAlert') {
+      entityAlertClassNames.add(data.className);
+    } else if (data.type === 'removeEntityAlert') {
+      entityAlertClassNames.delete(data.className);
+    } else if (data.type === 'syncEntityAlerts') {
+      entityAlertClassNames = new Set(data.classNames);
+    }
+    
+    // Trigger all registered update callbacks
+    if (data.type === 'addEntityAlert' || data.type === 'removeEntityAlert' || data.type === 'syncEntityAlerts') {
+      alertUpdateCallbacks.forEach(callback => callback());
+    }
+  });
+
+  hytopia.registerSceneUITemplate('entity-nameplate', (id, onState) => {
+    const template = document.getElementById('entity-nameplate-template');
+    const clone = template.content.cloneNode(true);
+    const nameplate = clone.querySelector('.entity-nameplate');
+    const alert = clone.querySelector('.entity-nameplate-alert');
+    const name = clone.querySelector('.entity-nameplate-name');
+    const interact = clone.querySelector('.entity-nameplate-interact');
+    const level = clone.querySelector('.entity-nameplate-level');
+    const healthBar = clone.querySelector('.entity-nameplate-health-bar');
+    const healthBarFill = clone.querySelector('.entity-nameplate-health-bar-fill');
+    
+    let className = '';
+    let damageCount = 0;
+    let lastHealth = null;
+
+    // Function to update this nameplate's alert display
+    const updateAlert = () => {
+      const shouldShowAlert = className && entityAlertClassNames.has(className);
+      alert.style.display = shouldShowAlert ? 'block' : 'none';
+    };
+
+    // Register for alert updates
+    alertUpdateCallbacks.push(updateAlert);
+
+    onState(state => {
+      if (state.className) {
+        className = state.className;
+        updateAlert();
+      }
+
+      // Calculate health change if we have a previous health value
+      if (lastHealth !== null && state.health !== undefined && state.health !== lastHealth) {
+        const healthChange = state.health - lastHealth;
+        
+        if (healthChange < 0) {
+          // Damage taken - show red damage number
+          showDamageNumber(-healthChange, 'damage');
+        } else if (healthChange > 0) {
+          // Healing received - show green healing number
+          showDamageNumber(healthChange, 'healing');
+        }
+      }
+      
+      // Update lastHealth for next comparison
+      if (state.health !== undefined) {
+        lastHealth = state.health;
+      }
+
+      if (state.dodged) {
+        const dodgedEl = document.createElement('div');
+        dodgedEl.className = 'entity-nameplate-dodged';
+        dodgedEl.textContent = 'Dodged!';
+        
+        const delay = damageCount++ * 50;
+        
+        nameplate.appendChild(dodgedEl);
+        
+        setTimeout(() => dodgedEl.classList.add('show'), delay);
+        setTimeout(() => {
+          dodgedEl.remove();
+          damageCount--;
+        }, 800 + delay);
+      }
+
+      if (state.interactable) {
+        interact.style.display = 'block';
+        
+        // Use custom action text if provided, otherwise show default based on platform
+        if (state.interactActionText) {
+          interact.textContent = state.interactActionText;
+        } else {
+          const isMobile = document.body.classList.contains('mobile');
+          interact.textContent = isMobile ? 'Tap to interact' : 'Click to interact';
+        }
+      } else {
+        interact.style.display = 'none';
+      }
+
+      if (state.name) {
+        name.style.display = 'block';
+        name.textContent = state.name;
+      }
+
+      if (state.level) {
+        level.style.display = 'block';
+        level.textContent = `Lvl ${state.level}`;
+      }
+
+      if (state.health >= 0 && state.maxHealth > 0) {
+        healthBar.style.display = 'block';
+        const healthPercent = state.health / state.maxHealth;
+        
+        healthBarFill.style.transform = `scaleX(${healthPercent})`;
+        
+        healthBarFill.className = 'entity-nameplate-health-bar-fill';
+        if (healthPercent > 0.66) healthBarFill.classList.add('health-high');
+        else if (healthPercent > 0.33) healthBarFill.classList.add('health-medium');
+        else healthBarFill.classList.add('health-low');
+      }
+
+      if (state.type) {
+        // Remove any existing type classes
+        nameplate.classList.remove('boss');
+        
+        // Apply boss class if entity type is boss
+        if (state.type === 'boss') {
+          nameplate.classList.add('boss');
+        }
+      }
+    });
+
+    function showDamageNumber(amount, type) {
+      const numberEl = document.createElement('div');
+      numberEl.className = `entity-nameplate-${type}`;
+      numberEl.textContent = type === 'damage' ? `-${amount}` : `+${amount}`;
+      
+      const delay = damageCount++ * 50;
+      
+      nameplate.appendChild(numberEl);
+      
+      setTimeout(() => numberEl.classList.add('show'), delay);
+      setTimeout(() => {
+        numberEl.remove();
+        damageCount--;
+      }, 800 + delay);
+    }
+
+    return clone;
+  });
+</script>
+
+<style>
+  .entity-nameplate {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    user-select: none;
+    pointer-events: none !important;
+  }
+
+  .entity-nameplate-alert {
+    display: none;
+    width: 16px;
+    height: 16px;
+    background: linear-gradient(145deg, #4CAF50, #66BB6A);
+    border: 1px solid rgba(76, 175, 80, 0.8);
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: 900;
+    color: #ffffff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+    text-align: center;
+    line-height: 16px;
+    margin-bottom: 6px;
+    box-shadow: 
+      0 0 8px rgba(76, 175, 80, 0.5),
+      0 1px 4px rgba(0, 0, 0, 0.8),
+      inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    animation: alertPulse 2s ease-in-out infinite;
+    z-index: 10;
+  }
+
+  @keyframes alertPulse {
+    0%, 100% { 
+      transform: scale(1);
+      box-shadow: 
+        0 0 8px rgba(76, 175, 80, 0.5),
+        0 1px 4px rgba(0, 0, 0, 0.8),
+        inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    }
+    50% { 
+      transform: scale(1.1);
+      box-shadow: 
+        0 0 12px rgba(76, 175, 80, 0.7),
+        0 1px 4px rgba(0, 0, 0, 0.8),
+        inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    }
+  }
+
+  .entity-nameplate-name {
+    display: none;
+    font-size: 12px;
+    font-weight: 600;
+    color: #ffffff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.9), 1px 1px 0 #000, -1px -1px 0 #000;
+    letter-spacing: 0.3px;
+    margin-bottom: 3px;
+  }
+
+  .entity-nameplate-interact {
+    display: none;
+    font-size: 10px;
+    font-weight: 500;
+    color: #DDDDDD;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.9), 1px 1px 0 #000, -1px -1px 0 #000;
+    letter-spacing: 0.1px;
+    margin-bottom: 2px;
+    opacity: 0.8;
+    animation: subtlePulse 2s ease-in-out infinite;
+  }
+
+  @keyframes subtlePulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 0.9; }
+  }
+
+  .entity-nameplate-level {
+    display: none;
+    font-size: 10px;
+    font-weight: 600;
+    color: #ffd700;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.9), 1px 1px 0 #000, -1px -1px 0 #000, 0 0 0 #000;
+    letter-spacing: 0.2px;
+    margin-bottom: 2px;
+  }
+
+  .entity-nameplate-damage {
+    position: absolute;
+    top: -15px;
+    left: 50%;
+    font-size: 18px;
+    font-weight: 700;
+    color: #ff0000;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.9), 1px 1px 0 #000, -1px -1px 0 #000;
+    opacity: 0;
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+
+  .entity-nameplate-healing {
+    position: absolute;
+    top: -15px;
+    left: 50%;
+    font-size: 18px;
+    font-weight: 700;
+    color: #00ff00;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.9), 1px 1px 0 #000, -1px -1px 0 #000;
+    opacity: 0;
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+
+  .entity-nameplate-dodged {
+    position: absolute;
+    top: -15px;
+    left: 50%;
+    font-size: 16px;
+    font-weight: 700;
+    color: #ffd700;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.9), 1px 1px 0 #000, -1px -1px 0 #000;
+    opacity: 0;
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+
+  .entity-nameplate-damage.show {
+    animation: damageFloat 0.8s ease-out;
+  }
+
+  .entity-nameplate-healing.show {
+    animation: healingFloat 0.8s ease-out;
+  }
+
+  .entity-nameplate-dodged.show {
+    animation: dodgedFloat 0.8s ease-out;
+  }
+
+  @keyframes damageFloat {
+    0% { opacity: 0; transform: translateX(-50%) translateY(0) scale(0.5); }
+    15% { opacity: 1; transform: translateX(-50%) translateY(-8px) scale(1.2); }
+    30% { transform: translateX(-50%) translateY(-12px) scale(1); }
+    100% { opacity: 0; transform: translateX(-50%) translateY(-30px) scale(0.8); }
+  }
+
+  @keyframes healingFloat {
+    0% { opacity: 0; transform: translateX(-50%) translateY(0) scale(0.5); }
+    15% { opacity: 1; transform: translateX(-50%) translateY(-10px) scale(1.1); }
+    30% { transform: translateX(-50%) translateY(-15px) scale(1); }
+    60% { transform: translateX(-50%) translateY(-20px) scale(1.05); }
+    100% { opacity: 0; transform: translateX(-50%) translateY(-35px) scale(0.9); }
+  }
+
+  @keyframes dodgedFloat {
+    0% { opacity: 0; transform: translateX(-50%) translateY(0) scale(0.5); }
+    15% { opacity: 1; transform: translateX(-50%) translateY(-10px) scale(1.3); }
+    30% { transform: translateX(-50%) translateY(-14px) scale(1); }
+    60% { transform: translateX(-50%) translateY(-18px) scale(1.05); }
+    100% { opacity: 0; transform: translateX(-50%) translateY(-35px) scale(0.8); }
+  }
+
+  .entity-nameplate-health-bar {
+    display: none;
+    width: 80px;
+    height: 5px;
+    background: rgba(0,0,0,0.7);
+    border: 1px solid rgba(0,0,0,0.9);
+    border-radius: 2px;
+    overflow: hidden;
+    box-shadow: 0 0 4px rgba(0,0,0,0.8);
+  }
+
+  .entity-nameplate-health-bar-fill {
+    height: 100%;
+    width: 100%;
+    background-color: #4CAF50;
+    transition: transform 0.3s ease-out, background-color 0.3s ease-out;
+    transform-origin: left center;
+    transform: scaleX(1);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.3);
+  }
+
+  .entity-nameplate-health-bar-fill.health-high { background-color: #4CAF50; }
+  .entity-nameplate-health-bar-fill.health-medium { background-color: #FFC107; }
+  .entity-nameplate-health-bar-fill.health-low { background-color: #f44336; }
+
+  .entity-nameplate.boss .entity-nameplate-name {
+    color: #ef4444;
+  }
+</style>

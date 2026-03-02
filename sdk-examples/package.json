@@ -1,0 +1,12 @@
+{
+  "name": "@hytopia.com/examples",
+  "version": "1.0.64",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}

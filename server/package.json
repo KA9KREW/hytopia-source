@@ -1,0 +1,63 @@
+{
+  "name": "server",
+  "version": "0.1.0",
+  "private": true,
+  "module": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon -q --watch src --ext ts,json --ignore src/playground.mjs -x \"npm run build:playground && node src/playground.mjs\"",
+    "build": "npm run build:server && npm run build:declaration && npm run build:api && npm run build:docs",
+    "build:playground": "bun build src/playground.ts --minify --legal-comments=inline --target=node --format=esm --sourcemap=none --outfile=./src/playground.mjs --env=disable --external=@fails-components/webtransport --external=@fails-components/webtransport-transport-http3-quiche",
+    "build:server": "bun build src/index.ts --minify --legal-comments=inline --target=node --format=esm --sourcemap=none --outfile=../sdk/server.mjs --env=disable --external=@fails-components/webtransport --external=@fails-components/webtransport-transport-http3-quiche",
+    "build:declaration": "tsc --emitDeclarationOnly --project tsconfig.json || true && tsc-alias",
+    "build:docs": "npx api-documenter markdown --input-folder=../sdk --output-folder ../sdk/docs",
+    "build:api": "npx api-extractor run --local || true",
+    "format": "npx eslint --fix ./src"
+  },
+  "devDependencies": {
+    "@gltf-transform/cli": "^4.2.1",
+    "@microsoft/api-documenter": "^7.25.21",
+    "@microsoft/api-extractor": "^7.47.11",
+    "@types/express": "^5.0.3",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
+    "@typescript-eslint/eslint-plugin": "^8.3.0",
+    "@typescript-eslint/parser": "^8.3.0",
+    "eslint": "^9.9.1",
+    "eslint-plugin-tsdoc": "^0.3.0",
+    "jsdoc": "^4.0.4",
+    "nodemon": "^3.1.0",
+    "tsc-alias": "^1.8.16",
+    "typescript-eslint": "^8.13.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5.4.2"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-simd-compat": "0.19.3",
+    "@fails-components/webtransport": "1.4.4",
+    "@fails-components/webtransport-transport-http3-quiche": "1.4.4",
+    "@gltf-transform/core": "4.2.1",
+    "@gltf-transform/functions": "4.2.1",
+    "@hytopia.com/creative-lib": "0.0.16",
+    "@hytopia.com/save-states": "0.0.14",
+    "@hytopia.com/server-protocol": "^1.4.56",
+    "@sentry/node": "9.22.0",
+    "ajv": "8.17.1",
+    "eventemitter3": "5.0.1",
+    "execa": "9.5.2",
+    "express": "5.1.0",
+    "gl-matrix": "3.4.3",
+    "glob": "11.0.2",
+    "graphql-ws": "6.0.6",
+    "heap-js": "2.6.0",
+    "jimp": "^1.6.0",
+    "msgpackr": "1.11.4",
+    "undici": "^7.16.0",
+    "uuid": "10.0.0",
+    "ws": "8.18.3"
+  },
+  "trustedDependencies": [
+    "sharp"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "multiagent-demo",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@hytopia.com/assets": "^0.4.2",
+    "hytopia": "*",
+    "openai": "^4.77.3"
+  },
+  "trustedDependencies": [
+    "sharp"
+  ]
+}
