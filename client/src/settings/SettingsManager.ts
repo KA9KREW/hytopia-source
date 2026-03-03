@@ -88,8 +88,8 @@ export const QUALITY_PRESETS: Record<string, QualityPerfTradeoff> = {
     resolution: { multiplier: 1.0 },
     viewDistance: {
       enabled: true,
-      distance: 150,
-      fog: { enabled: true, far: 150, near: 125 },
+      distance: 80,
+      fog: { enabled: true, far: 72, near: 20 },
     },
     environmentalAnimations: {
       enabled: false,
@@ -111,8 +111,8 @@ export const QUALITY_PRESETS: Record<string, QualityPerfTradeoff> = {
     resolution: { multiplier: 0.85 },
     viewDistance: {
       enabled: true,
-      distance: 75,
-      fog: { enabled: true, far: 75, near: 65 },
+      distance: 64,
+      fog: { enabled: true, far: 60, near: 16 },
     },
     environmentalAnimations: {
       enabled: false,
@@ -126,8 +126,8 @@ export const QUALITY_PRESETS: Record<string, QualityPerfTradeoff> = {
     resolution: { multiplier: 0.5 },
     viewDistance: {
       enabled: true,
-      distance: 50,
-      fog: { enabled: true, far: 50, near: 30 },
+      distance: 48,
+      fog: { enabled: true, far: 45, near: 12 },
     },
     environmentalAnimations: {
       enabled: false,

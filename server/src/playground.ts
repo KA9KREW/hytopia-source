@@ -19,11 +19,14 @@ import worldMap from '../../assets/release/maps/boilerplate-small.json';
 const USE_PROCEDURAL = true; // Set true to test procedural + binary persistence
 const USE_PERSISTENCE = true; // Persist modified chunks to ./world-data
 const SPAWN_PRELOAD_RADIUS = 4; // chunks around spawn
-const CHUNK_LOAD_RADIUS_BLOCKS = 350; // load chunks within this distance of players (horizontal)
-const CHUNK_UNLOAD_RADIUS_BLOCKS = 420; // unload beyond this (buffer > load to avoid thrashing)
-const CHUNKS_PER_TICK = 8; // max new chunks to load per tick (keeps movement smooth)
+const VIEW_CHUNK_OPTIONS = [4, 6, 8, 10, 12, 16, 20] as const; // chunks (4=64 blocks, 8=128, etc.)
+const DEFAULT_VIEW_CHUNKS = 4; // 64 blocks radius - smooth performance
+const CHUNK_UNLOAD_BUFFER_CHUNKS = 2; // unload radius = load + this
+const CHUNKS_PER_TICK = 8; // max new chunks to load per tick
 const UNLOAD_INTERVAL_TICKS = 60; // run unload pass every ~1 sec
 const CHUNKS_PER_UNLOAD_PASS = 50; // cap unloads per pass to avoid hitches
+const UNLOAD_GRACE_TICKS = 90; // chunks must be out of range this long before unload (reduces thrash)
+const DEBUG_CHUNK_STATS = false; // set true to log chunk count + tick time every 5 sec
 const SPAWN_X = 0;
 const SPAWN_Z = 0;
 
@@ -63,6 +66,9 @@ startServer(defaultWorld => {
     });
     defaultWorld.setSkyboxUri('skyboxes/partly-cloudy');
     defaultWorld.setSkyboxIntensity(1);
+    defaultWorld.setFogColor({ r: 200, g: 220, b: 245 });
+    defaultWorld.setFogFar(72);
+    defaultWorld.setFogNear(20);
 
     const procedural = new ProceduralChunkProvider(TERRAIN_OPTIONS);
     const provider = USE_PERSISTENCE
@@ -90,13 +96,48 @@ startServer(defaultWorld => {
   defaultWorld.on(PlayerEvent.LEFT_WORLD, playerLeftWorld);
 
   if (USE_PROCEDURAL) {
+    const viewChunks = { value: DEFAULT_VIEW_CHUNKS };
+    defaultWorld.chatManager.registerCommand('/view', (player, args) => {
+      if (args.length === 0) {
+        defaultWorld.chatManager.sendPlayerMessage(
+          player,
+          `View distance: ${viewChunks.value} chunks (${viewChunks.value * 16} blocks). Use /view [4|6|8|10|12|16|20] to change.`,
+          'AAAAAA'
+        );
+        return;
+      }
+      const n = parseInt(args[0], 10);
+      if (!Number.isInteger(n) || !(VIEW_CHUNK_OPTIONS as readonly number[]).includes(n)) {
+        defaultWorld.chatManager.sendPlayerMessage(
+          player,
+          `Use /view [4|6|8|10|12|16|20]. Current: ${viewChunks.value} chunks.`,
+          'FF6666'
+        );
+        return;
+      }
+      viewChunks.value = n;
+      defaultWorld.chatManager.sendPlayerMessage(
+        player,
+        `View distance set to ${n} chunks (${n * 16} blocks). Lower = less lag.`,
+        '66FF66'
+      );
+    });
+
     let tickCount = 0;
-    defaultWorld.on(WorldLoopEvent.TICK_END, () => {
-      loadChunksAroundPlayers(defaultWorld, CHUNK_LOAD_RADIUS_BLOCKS, CHUNKS_PER_TICK);
+    const chunkLastInRangeTick = new Map<string, number>();
+    defaultWorld.on(WorldLoopEvent.TICK_END, ({ worldLoop, tickDurationMs }) => {
+      const tick = worldLoop.currentTick;
+      const loadRadius = viewChunks.value * 16;
+      const unloadRadius = (viewChunks.value + CHUNK_UNLOAD_BUFFER_CHUNKS) * 16;
+      loadChunksAroundPlayers(defaultWorld, loadRadius, CHUNKS_PER_TICK);
       tickCount++;
       if (tickCount >= UNLOAD_INTERVAL_TICKS) {
         tickCount = 0;
-        unloadDistantChunks(defaultWorld, CHUNK_UNLOAD_RADIUS_BLOCKS, CHUNKS_PER_UNLOAD_PASS);
+        unloadDistantChunks(defaultWorld, unloadRadius, CHUNKS_PER_UNLOAD_PASS, UNLOAD_GRACE_TICKS, tick, chunkLastInRangeTick);
+      }
+      if (DEBUG_CHUNK_STATS && tick > 0 && tick % 300 === 0) {
+        const count = defaultWorld.chunkLattice.chunkCount;
+        console.log(`[ChunkStats] tick=${tick} chunks=${count} view=${viewChunks.value} lastTickMs=${tickDurationMs.toFixed(2)}`);
       }
     });
   }
@@ -150,17 +191,19 @@ function playerLeftWorld({ player, world }: { player: Player, world: World }) {
   world.entityManager.getPlayerEntitiesByPlayer(player).forEach(entity => entity.despawn());
 }
 
-/** Load chunks within radius of all players (horizontal XZ). Spreads loading across ticks. */
+/** Load chunks within radius of all players. Prioritizes chunks in front of view direction. */
 function loadChunksAroundPlayers(world: World, radiusBlocks: number, maxPerTick: number): void {
   const lattice = world.chunkLattice;
-  const players = world.entityManager.getAllPlayerEntities();
-  if (players.length === 0) return;
+  const entities = world.entityManager.getAllPlayerEntities();
+  if (entities.length === 0) return;
 
   const radiusChunks = Math.ceil(radiusBlocks / 16);
-  const toLoad: { origin: { x: number; y: number; z: number }; distSq: number }[] = [];
+  const radiusSq = radiusBlocks * radiusBlocks;
+  const toLoad: { origin: { x: number; y: number; z: number }; sortKey: number }[] = [];
 
-  for (const entity of players) {
+  for (const entity of entities) {
     const pos = entity.position;
+    const dir = entity.player.camera.facingDirection;
     const pcx = Math.floor(pos.x / 16);
     const pcz = Math.floor(pos.z / 16);
 
@@ -171,22 +214,31 @@ function loadChunksAroundPlayers(world: World, radiusBlocks: number, maxPerTick:
         const dx = pos.x - chunkCenterX;
         const dz = pos.z - chunkCenterZ;
         const distSq = dx * dx + dz * dz;
-        if (distSq > radiusBlocks * radiusBlocks) continue;
+        if (distSq > radiusSq) continue;
+
+        const toChunkX = chunkCenterX - pos.x;
+        const toChunkZ = chunkCenterZ - pos.z;
+        const inFront = toChunkX * dir.x + toChunkZ * dir.z;
+        const dist = Math.sqrt(distSq);
+        const inFrontNorm = dist > 0 ? inFront / dist : 0;
+        const viewBonus = Math.max(0, inFrontNorm) * 150;
+        const sortKey = distSq - viewBonus * viewBonus;
 
         for (let cy = 0; cy < 6; cy++) {
           const origin = { x: cx * 16, y: cy * 16, z: cz * 16 };
           if (lattice.hasChunk(origin)) continue;
-          toLoad.push({ origin, distSq });
+          toLoad.push({ origin, sortKey });
         }
       }
     }
   }
 
-  toLoad.sort((a, b) => a.distSq - b.distSq);
+  toLoad.sort((a, b) => a.sortKey - b.sortKey);
   const unique = new Map<string, typeof toLoad[0]>();
   for (const t of toLoad) {
     const key = `${t.origin.x},${t.origin.y},${t.origin.z}`;
-    if (!unique.has(key)) unique.set(key, t);
+    const existing = unique.get(key);
+    if (!existing || t.sortKey < existing.sortKey) unique.set(key, t);
   }
   const sorted = Array.from(unique.values()).slice(0, maxPerTick);
 
@@ -195,8 +247,15 @@ function loadChunksAroundPlayers(world: World, radiusBlocks: number, maxPerTick:
   }
 }
 
-/** Unload chunks beyond radius of ALL players. Keeps memory bounded and server smooth. */
-function unloadDistantChunks(world: World, unloadRadiusBlocks: number, maxPerPass: number): void {
+/** Unload chunks beyond radius of ALL players. Grace period reduces thrashing. */
+function unloadDistantChunks(
+  world: World,
+  unloadRadiusBlocks: number,
+  maxPerPass: number,
+  graceTicks: number,
+  currentTick: number,
+  lastInRangeTick: Map<string, number>
+): void {
   const lattice = world.chunkLattice;
   const players = world.entityManager.getAllPlayerEntities();
   if (players.length === 0) return;
@@ -206,20 +265,31 @@ function unloadDistantChunks(world: World, unloadRadiusBlocks: number, maxPerPas
 
   for (const chunk of lattice.getAllChunks()) {
     const origin = chunk.originCoordinate;
+    const key = `${origin.x},${origin.y},${origin.z}`;
     const cx = origin.x + 8;
     const cz = origin.z + 8;
 
-    let keep = false;
+    let inRange = false;
     for (const entity of players) {
       const pos = entity.position;
       const dx = pos.x - cx;
       const dz = pos.z - cz;
       if (dx * dx + dz * dz <= unloadRadiusSq) {
-        keep = true;
+        inRange = true;
         break;
       }
     }
-    if (!keep) toUnload.push(origin);
+
+    if (inRange) {
+      lastInRangeTick.set(key, currentTick);
+    } else {
+      const last = lastInRangeTick.get(key);
+      if (last === undefined) lastInRangeTick.set(key, currentTick);
+      else if (currentTick - last >= graceTicks) {
+        toUnload.push(origin);
+        lastInRangeTick.delete(key);
+      }
+    }
   }
 
   for (let i = 0; i < Math.min(toUnload.length, maxPerPass); i++) {

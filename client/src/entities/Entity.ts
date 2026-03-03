@@ -43,7 +43,7 @@ import type { ChunkWorkerBlockEntityBuildMessage } from '../workers/ChunkWorkerC
 const DEFAULT_ANIMATION_BLEND_TIME_S = 0.1;
 const DEFAULT_OPACITY = 1.0;
 const SKY_LIGHT_INTERPOLATION_TIME_S = 0.1;
-const TRANSFORM_INTERPOLATION_TIME_S = 0.04;
+const TRANSFORM_INTERPOLATION_TIME_S = 0.08; // Slightly longer for smoother movement, reduces jitter on mobile
 const LOOP_MODE_ONCE = 0;
 const LOOP_MODE_LOOP = 1;
 const LOOP_MODE_PING_PONG = 2;
@@ -2866,7 +2866,7 @@ export default class Entity {
 
   public _interpolate(deltaTimeS: number) {
     if (this._interpolatingPosition || this._interpolatingRotation || this._interpolatingScale) {
-      // Default interpolation is tuned for 30Hz server updates (~33ms between packets).
+      // Interpolation smooths over network updates to reduce visible jitter.
       // Interpolation settings are stateful and persist until explicitly changed.
 
       if (this._interpolatingPosition) {

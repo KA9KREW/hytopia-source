@@ -11,6 +11,7 @@ const MIN_ZOOM = 3.0;
 const MAX_ZOOM = 10.0;
 const INITIAL_ZOOM = 6.0;
 const CAMERA_LERP_TIME = 0.2;
+const CAMERA_POSITION_LERP_TIME = 0.1; // Smooth follow for reduced jitter on mobile
 
 // Working variables
 const vec2 = new Vector2();
@@ -77,6 +78,8 @@ export default class Camera {
   private _gameCameraYaw: number = 0;
   private _gameCameraViewDir: Vector3 = new Vector3();
   private _gameCameraCollisionDistance: number = Infinity; // Current collision-adjusted distance
+  private _gameCameraSmoothedAttachmentPosition: Vector3 = new Vector3();
+  private _gameCameraSmoothedAttachmentValid: boolean = false;
 
   private _spectatorCamera: PerspectiveCamera;
   private _spectatorCameraPitch: number = 0;
@@ -269,6 +272,7 @@ export default class Camera {
       if (deserializedCamera.attachedToEntityId !== null) {
         this._gameCameraAttachedPosition = undefined;
       }
+      this._gameCameraSmoothedAttachmentValid = false;
 
       this._gameCameraAttachedEntity = deserializedCamera.attachedToEntityId !== null
         ? this._game.entityManager.getEntity(deserializedCamera.attachedToEntityId)
@@ -284,6 +288,7 @@ export default class Camera {
     }
 
     if (deserializedCamera.attachedToPosition !== undefined) {
+      this._gameCameraSmoothedAttachmentValid = false;
       if (deserializedCamera.attachedToPosition !== null) {
         if (this._gameCameraAttachedEntity) {
           this._gameCameraAttachedEntity.setModelHiddenNodes([]);
@@ -501,8 +506,16 @@ export default class Camera {
       return console.warn(`Camera._updateGameCamera(): No camera attachment or position set for game camera.`);
     }
 
-    // Get base positions for camera calculations
-    const attachedPosition = this._gameCameraAttachedEntity?.getWorldPosition(vec3) || this._gameCameraAttachedPosition!;
+    // Get raw attachment position and smooth it to reduce jitter (especially on mobile)
+    const rawAttachmentPosition = this._gameCameraAttachedEntity?.getWorldPosition(vec3) || this._gameCameraAttachedPosition!;
+    if (!this._gameCameraSmoothedAttachmentValid) {
+      this._gameCameraSmoothedAttachmentPosition.copy(rawAttachmentPosition);
+      this._gameCameraSmoothedAttachmentValid = true;
+    } else {
+      const positionLerpFactor = Math.min(frameDeltaS / CAMERA_POSITION_LERP_TIME, 1);
+      this._gameCameraSmoothedAttachmentPosition.lerp(rawAttachmentPosition, positionLerpFactor);
+    }
+    const attachedPosition = this._gameCameraSmoothedAttachmentPosition;
     const lookAtPosition = this._gameCameraLookAtPosition || this._gameCameraTrackedEntity?.position || this._gameCameraTrackedPosition;
     let lookAtDirection: Vector3 | undefined;
 
