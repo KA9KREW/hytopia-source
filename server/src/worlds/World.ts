@@ -1,4 +1,5 @@
 import protocol from '@hytopia.com/server-protocol';
+import { ProceduralChunkProvider } from '@/worlds/maps/ProceduralChunkProvider';
 import AudioManager from '@/worlds/audios/AudioManager';
 import BlockTypeRegistry from '@/worlds/blocks/BlockTypeRegistry';
 import ChatManager from '@/worlds/chat/ChatManager';
@@ -114,6 +115,12 @@ export interface WorldOptions {
 
   /** The gravity vector for the world. */
   gravity?: Vector3Like;
+
+  /** Seed for procedural terrain generation. Same seed = same terrain. */
+  seed?: number;
+
+  /** Chunk provider for on-demand loading (procedural or persisted). */
+  chunkProvider?: import('@/worlds/maps/ChunkProvider').ChunkProvider;
 }
 
 /**
@@ -326,6 +333,16 @@ export default class World extends EventRouter implements protocol.Serializable 
 
     if (options.map) {
       this.loadMap(options.map);
+    }
+
+    if (options.chunkProvider) {
+      this._chunkLattice.setChunkProvider(options.chunkProvider);
+    } else if (options.seed !== undefined) {
+      this._chunkLattice.setChunkProvider(new ProceduralChunkProvider({
+        seed: options.seed,
+        seaLevel: 32,
+        maxHeight: 64,
+      }));
     }
   }
 

@@ -35,6 +35,13 @@ export type { ChatEventPayloads, CommandCallback } from '@/worlds/chat/ChatManag
 // Chunk
 export { default as Chunk } from '@/worlds/blocks/Chunk';
 
+// ChunkProvider (procedural / persisted maps)
+export type { ChunkProvider } from '@/worlds/maps/ChunkProvider';
+export { ProceduralChunkProvider } from '@/worlds/maps/ProceduralChunkProvider';
+export { PersistenceChunkProvider } from '@/worlds/maps/PersistenceChunkProvider';
+export { generateChunk, DEFAULT_BLOCK_IDS } from '@/worlds/maps/TerrainGenerator';
+export type { TerrainGeneratorOptions } from '@/worlds/maps/TerrainGenerator';
+
 // ChunkLattice
 export { default as ChunkLattice, ChunkLatticeEvent } from '@/worlds/blocks/ChunkLattice';
 export type { ChunkLatticeEventPayloads } from '@/worlds/blocks/ChunkLattice';

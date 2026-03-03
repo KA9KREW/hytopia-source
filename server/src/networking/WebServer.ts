@@ -127,6 +127,12 @@ export default class WebServer extends EventRouter {
     // Local assets first (higher priority)
     this._assetDirs.push(path.resolve('assets'));
 
+    // Monorepo dev: serve from repo root assets/release (skyboxes, blocks, models)
+    const monorepoRelease = path.resolve('..', 'assets', 'release');
+    if (fs.existsSync(monorepoRelease)) {
+      this._assetDirs.push(monorepoRelease);
+    }
+
     // Dev: also serve from assets library
     const libPath = AssetsLibrary.assetsLibraryPath;
     if (libPath) {

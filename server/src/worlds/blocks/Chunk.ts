@@ -176,6 +176,26 @@ export default class Chunk implements protocol.Serializable {
     return this._blocks[this._getIndex(localCoordinate)] !== 0;
   }
 
+  /**
+   * Bulk-load block IDs from array (e.g. from procedural generation or region file).
+   * Used internally by ChunkProvider implementations.
+   * @internal
+   */
+  public loadBlocks(blocks: Uint8Array): void {
+    this._blocks.set(blocks.subarray(0, CHUNK_VOLUME));
+  }
+
+  /**
+   * Load block rotations from entries (blockIndex -> rotation). Used when loading from region files.
+   * @internal
+   */
+  public loadRotations(entries: Iterable<[number, BlockRotation]>): void {
+    this._blockRotations.clear();
+    for (const [idx, r] of entries) {
+      this._blockRotations.set(idx, r);
+    }
+  }
+
   /** @internal */
   public setBlock(localCoordinate: Vector3Like, blockTypeId: number, blockRotation?: BlockRotation): void {
     if (!this._isValidLocalCoordinate(localCoordinate)) {

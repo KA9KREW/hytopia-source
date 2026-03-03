@@ -21,6 +21,8 @@ const BLOCK_TEXTURE_REGISTRY_CONFIG = {
   DIRECTORIES: [
     AssetsLibrary.assetsLibraryPath && path.join(AssetsLibrary.assetsLibraryPath, 'blocks'),
     path.resolve(process.cwd(), 'assets', 'blocks'),
+    path.resolve(process.cwd(), '..', 'assets', 'release', 'blocks'),
+    path.resolve(process.cwd(), '..', 'assets', 'blocks'),
   ].filter(Boolean) as string[],
 } as const;
 
@@ -150,7 +152,9 @@ export default class BlockTextureRegistry {
   /** @internal */
   public async preloadAtlas(): Promise<void> {
     const absoluteTexturePaths = await this._getAbsoluteTexturePaths();
-    const outputDir = path.resolve(process.cwd(), 'assets/blocks', BLOCK_TEXTURE_REGISTRY_CONFIG.ATLAS_DIR);
+    const blocksDir = BLOCK_TEXTURE_REGISTRY_CONFIG.DIRECTORIES.find(d => d && fs.existsSync(d) && absoluteTexturePaths[0]?.startsWith(path.normalize(d)));
+    const outputBase = blocksDir ?? path.resolve(process.cwd(), 'assets', 'blocks');
+    const outputDir = path.join(outputBase, BLOCK_TEXTURE_REGISTRY_CONFIG.ATLAS_DIR);
     
     // Try to load cached atlas
     if (this._loadCachedAtlasManifest(absoluteTexturePaths, outputDir)) {
@@ -376,11 +380,11 @@ export default class BlockTextureRegistry {
 
   /** @internal */
   private _calculateGridLayout(textureCount: number): { cols: number; rows: number } {
-    const powerOfTwo = (n: number) => 2 ** Math.ceil(Math.log2(n));
+    if (textureCount <= 0) return { cols: 1, rows: 1 };
+    const powerOfTwo = (n: number) => 2 ** Math.ceil(Math.log2(Math.max(1, n)));
     const sqrt = Math.ceil(Math.sqrt(textureCount));
     const cols = powerOfTwo(sqrt);
     const rows = powerOfTwo(Math.ceil(textureCount / cols));
-    
     return { cols, rows };
   }
 

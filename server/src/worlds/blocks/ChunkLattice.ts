@@ -8,6 +8,7 @@ import type Collider from '@/worlds/physics/Collider';
 import type Vector3Like from '@/shared/types/math/Vector3Like';
 import type World from '@/worlds/World';
 import type { BlockPlacement, BlockRotation } from '@/worlds/blocks/Block';
+import type { ChunkProvider } from '@/worlds/maps/ChunkProvider';
 
 const CHUNK_MASK_WORD_BITS = 32;
 const CHUNK_MASK_WORD_COUNT = CHUNK_VOLUME / CHUNK_MASK_WORD_BITS;
@@ -91,6 +92,12 @@ export default class ChunkLattice extends EventRouter {
   /** @internal */
   private _world: World;
 
+  /** @internal */
+  private _chunkProvider: ChunkProvider | undefined;
+
+  /** @internal */
+  private _dirtyChunks: Set<bigint> = new Set();
+
   /**
    * Creates a new chunk lattice instance.
    * @param world - The world the chunk lattice is for.
@@ -108,6 +115,16 @@ export default class ChunkLattice extends EventRouter {
    */
   public get chunkCount(): number {
     return this._chunks.size;
+  }
+
+  /**
+   * Set the chunk provider for on-demand loading (procedural or persisted chunks).
+   * When getOrCreateChunk requests a missing chunk, the provider is consulted.
+   *
+   * **Category:** Blocks
+   */
+  public setChunkProvider(provider: ChunkProvider | undefined): void {
+    this._chunkProvider = provider;
   }
 
   /**
@@ -141,6 +158,7 @@ export default class ChunkLattice extends EventRouter {
     this._blockTypeChunkMasks.clear();
     this._blockTypeCounts.clear();
     this._chunks.clear();
+    this._dirtyChunks.clear();
   }
 
   /**
@@ -245,16 +263,84 @@ export default class ChunkLattice extends EventRouter {
       return chunk;
     }
 
+    if (this._chunkProvider) {
+      const fromProvider = this._chunkProvider.getChunk(originCoordinate);
+      const resolved = fromProvider && typeof (fromProvider as Promise<Chunk | null>).then === 'function'
+        ? null
+        : (fromProvider as Chunk | null);
+      if (resolved) {
+        chunk = resolved;
+        this._chunks.set(chunkKey, chunk);
+        this.emitWithWorld(this._world, ChunkLatticeEvent.ADD_CHUNK, {
+          chunkLattice: this,
+          chunk,
+        });
+        return chunk;
+      }
+    }
+
     chunk = new Chunk(originCoordinate);
-
     this._chunks.set(chunkKey, chunk);
-
     this.emitWithWorld(this._world, ChunkLatticeEvent.ADD_CHUNK, {
       chunkLattice: this,
       chunk,
     });
-
     return chunk;
+  }
+
+  /**
+   * Unload a chunk from the lattice. If the chunk was modified and the provider
+   * supports persistence, it will be saved.
+   *
+   * **Category:** Blocks
+   */
+  public unloadChunk(globalCoordinate: Vector3Like): boolean {
+    const originCoordinate = Chunk.globalCoordinateToOriginCoordinate(globalCoordinate);
+    const chunkKey = this._packCoordinate(originCoordinate);
+    const chunk = this._chunks.get(chunkKey);
+    if (!chunk) return false;
+
+    if (this._dirtyChunks.has(chunkKey) && this._chunkProvider?.persistChunk) {
+      this._chunkProvider.persistChunk(chunk);
+      this._dirtyChunks.delete(chunkKey);
+    }
+
+    this._removeChunkFromColliders(chunk);
+    this._chunks.delete(chunkKey);
+    this.emitWithWorld(this._world, ChunkLatticeEvent.REMOVE_CHUNK, {
+      chunkLattice: this,
+      chunk,
+    });
+    return true;
+  }
+
+  /** @internal */
+  private _removeChunkFromColliders(chunk: Chunk): void {
+    const origin = chunk.originCoordinate;
+    for (let i = 0; i < CHUNK_VOLUME; i++) {
+      const blockTypeId = chunk.blocks[i];
+      if (blockTypeId !== 0) {
+        const local = Chunk.blockIndexToLocalCoordinate(i);
+        const global = {
+          x: origin.x + local.x,
+          y: origin.y + local.y,
+          z: origin.z + local.z,
+        };
+        this._removeBlockTypePlacement(blockTypeId, global);
+      }
+    }
+    const toRemove: number[] = [];
+    for (const [blockTypeId, count] of this._blockTypeCounts) {
+      if (count <= 0) toRemove.push(blockTypeId);
+    }
+    for (const blockTypeId of toRemove) {
+      const collider = this._blockTypeColliders.get(blockTypeId);
+      if (collider) {
+        this._world.simulation.colliderMap.removeColliderBlockType(collider);
+        collider.removeFromSimulation();
+        this._blockTypeColliders.delete(blockTypeId);
+      }
+    }
   }
 
   /**
@@ -486,6 +572,11 @@ export default class ChunkLattice extends EventRouter {
           this._recreateTrimeshCollider(blockTypeId);
         }
       }
+    }
+
+    this._dirtyChunks.add(this._packCoordinate(Chunk.globalCoordinateToOriginCoordinate(globalCoordinate)));
+    if (this._chunkProvider?.markDirty) {
+      this._chunkProvider.markDirty(Chunk.globalCoordinateToOriginCoordinate(globalCoordinate));
     }
 
     this.emitWithWorld(this._world, ChunkLatticeEvent.SET_BLOCK, {
