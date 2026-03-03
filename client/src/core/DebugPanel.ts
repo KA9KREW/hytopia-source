@@ -18,6 +18,11 @@ export interface DebugPanelConfig {
   player: {
     position: `${string}, ${string}, ${string}`;
   };
+  teleport: {
+    x: number;
+    y: number;
+    z: number;
+  };
   camera: {
     position: `${string}, ${string}, ${string}`;
   };
@@ -95,6 +100,11 @@ export default class DebugPanel {
   private _config: DebugPanelConfig = {
     player: {
       position: `-, -, -`,
+    },
+    teleport: {
+      x: 0,
+      y: 32,
+      z: 0,
     },
     camera: {
       position: `-, -, -`,
@@ -193,8 +203,15 @@ export default class DebugPanel {
     }
 
     // Player panel
-    const playerFoler = this._gui.addFolder('Player');
-    playerFoler.add(this._config.player, 'position').name('Position');
+    const playerFolder = this._gui.addFolder('Player');
+    playerFolder.add(this._config.player, 'position').name('Position');
+
+    // Teleport panel - manually set x,y,z and teleport
+    const teleportFolder = this._gui.addFolder('Teleport');
+    teleportFolder.add(this._config.teleport, 'x', -10000, 10000, 1).name('X');
+    teleportFolder.add(this._config.teleport, 'y', -1000, 1000, 1).name('Y');
+    teleportFolder.add(this._config.teleport, 'z', -10000, 10000, 1).name('Z');
+    teleportFolder.add({ teleport: () => this._onTeleport() }, 'teleport').name('Teleport');
 
     // Camera panel
     const cameraFolder = this._gui.addFolder('Camera');
@@ -318,9 +335,18 @@ export default class DebugPanel {
     if (this._game.camera.gameCameraAttachedEntity) {
       this._game.camera.gameCameraAttachedEntity.getWorldPosition(vec3);
       this._config.player.position = `${vec3.x.toFixed(2)}, ${vec3.y.toFixed(2)}, ${vec3.z.toFixed(2)}`;
+      // Keep teleport coords in sync with current position
+      this._config.teleport.x = Math.round(vec3.x);
+      this._config.teleport.y = Math.round(vec3.y);
+      this._config.teleport.z = Math.round(vec3.z);
     } else {
       this._config.player.position = `-, -, -`;
     }
+  }
+
+  private _onTeleport(): void {
+    const { x, y, z } = this._config.teleport;
+    this._game.networkManager.sendUIDataPacket({ type: 'teleport', x, y, z });
   }
 
   private _updateCameraInfo(): void {

@@ -24,6 +24,7 @@ export default class ChunkMeshManager {
   private _batchLiquidMeshes: Map<BatchId, Mesh<BufferGeometry, ShaderMaterial>> = new Map();
   private _batchOpaqueSolidMeshes: Map<BatchId, Mesh<BufferGeometry, MeshBasicMaterial>> = new Map();
   private _batchTransparentSolidMeshes: Map<BatchId, Mesh<BufferGeometry, MeshBasicMaterial>> = new Map();
+  private _batchFoliageMeshes: Map<BatchId, Mesh<BufferGeometry, MeshBasicMaterial>> = new Map();
   // Track all batch IDs for efficient iteration
   private _batchIds: Set<BatchId> = new Set();
   private _solidMeshesInScene: Mesh<BufferGeometry, MeshBasicMaterial>[] = [];
@@ -36,87 +37,101 @@ export default class ChunkMeshManager {
   private _createOrUpdateMesh(id: BatchId, data: BlocksBufferGeometryData, cache: Map<BatchId, Mesh>, material: Material): Mesh {
     const { positions, normals, uvs, indices, colors, lightLevels, foamLevels, foamLevelsDiag } = data;
 
-    const geometry = new BufferGeometry();
-
-    geometry.setAttribute(
-      'position',
-      new BufferAttribute(positions, CHUNK_BUFFER_GEOMETRY_NUM_POSITION_COMPONENTS),
-    );
-
-    geometry.setAttribute(
-      'normal',
-      new BufferAttribute(normals, CHUNK_BUFFER_GEOMETRY_NUM_NORMAL_COMPONENTS),
-    );
-
-    geometry.setAttribute(
-      'uv',
-      new BufferAttribute(uvs, CHUNK_BUFFER_GEOMETRY_NUM_UV_COMPONENTS),
-    );
-
-    geometry.setAttribute(
-      'color',
-      new BufferAttribute(colors, CHUNK_BUFFER_GEOMETRY_NUM_COLOR_COMPONENTS),
-    );
-
-    if (lightLevels) {
-      geometry.setAttribute(
-        'lightLevel',
-        new BufferAttribute(lightLevels, CHUNK_BUFFER_GEOMETRY_NUM_LIGHT_LEVEL_COMPONENTS),
-      );
-    }
-
-    if (foamLevels) {
-      geometry.setAttribute(
-        'foamLevel',
-        new BufferAttribute(foamLevels, CHUNK_BUFFER_GEOMETRY_NUM_FOAM_LEVEL_COMPONENTS),
-      );
-    }
-
-    if (foamLevelsDiag) {
-      geometry.setAttribute(
-        'foamLevelDiag',
-        new BufferAttribute(foamLevelsDiag, CHUNK_BUFFER_GEOMETRY_NUM_FOAM_LEVEL_COMPONENTS),
-      );
-    }
-
-    geometry.setIndex(new BufferAttribute(indices, 1));
-    geometry.computeBoundingSphere();
-
     let mesh = cache.get(id);
+    const canUpdateInPlace = mesh?.geometry?.attributes && this._canUpdateGeometryInPlace(mesh.geometry, data);
 
-    if (mesh) {
-      mesh.geometry.dispose();
-      mesh.geometry = geometry;
+    if (mesh && canUpdateInPlace) {
+      this._updateGeometryInPlace(mesh.geometry as import('three').BufferGeometry, data);
       mesh.material = material;
     } else {
-      mesh = new Mesh(geometry, material);
-      mesh.name = `batch_${id}`;
+      const geometry = new BufferGeometry();
+      geometry.setAttribute('position', new BufferAttribute(positions, CHUNK_BUFFER_GEOMETRY_NUM_POSITION_COMPONENTS));
+      geometry.setAttribute('normal', new BufferAttribute(normals, CHUNK_BUFFER_GEOMETRY_NUM_NORMAL_COMPONENTS));
+      geometry.setAttribute('uv', new BufferAttribute(uvs, CHUNK_BUFFER_GEOMETRY_NUM_UV_COMPONENTS));
+      geometry.setAttribute('color', new BufferAttribute(colors, CHUNK_BUFFER_GEOMETRY_NUM_COLOR_COMPONENTS));
+      if (lightLevels) geometry.setAttribute('lightLevel', new BufferAttribute(lightLevels, CHUNK_BUFFER_GEOMETRY_NUM_LIGHT_LEVEL_COMPONENTS));
+      if (foamLevels) geometry.setAttribute('foamLevel', new BufferAttribute(foamLevels, CHUNK_BUFFER_GEOMETRY_NUM_FOAM_LEVEL_COMPONENTS));
+      if (foamLevelsDiag) geometry.setAttribute('foamLevelDiag', new BufferAttribute(foamLevelsDiag, CHUNK_BUFFER_GEOMETRY_NUM_FOAM_LEVEL_COMPONENTS));
+      geometry.setIndex(new BufferAttribute(indices, 1));
+      geometry.computeBoundingSphere();
 
-      // The mesh has a fixed default position/rotation/scale, so we can skip matrix updates
-      mesh.matrixAutoUpdate = false;
-      mesh.matrixWorldAutoUpdate = false;
-
-      cache.set(id, mesh);
-      this._batchIds.add(id);
-
-      // Don't add to scene here - view distance will control when meshes enter the scene
+      if (mesh) {
+        mesh.geometry.dispose();
+        mesh.geometry = geometry;
+      } else {
+        mesh = new Mesh(geometry, material);
+        mesh.name = `batch_${id}`;
+        mesh.matrixAutoUpdate = false;
+        mesh.matrixWorldAutoUpdate = false;
+        cache.set(id, mesh);
+        this._batchIds.add(id);
+      }
+      mesh.material = material;
     }
 
     updateAABB(mesh);
-
     return mesh;
   }
 
-  private _removeMesh(id: BatchId, cache: Map<BatchId, Mesh>): void {
-    const mesh = cache.get(id);
+  private _canUpdateGeometryInPlace(geometry: import('three').BufferGeometry, data: BlocksBufferGeometryData): boolean {
+    const pos = geometry.attributes.position;
+    const idx = geometry.index;
+    return !!pos && !!idx &&
+      pos.array.length === data.positions.length &&
+      idx.array.length === data.indices.length;
+  }
 
+  private _updateGeometryInPlace(geometry: import('three').BufferGeometry, data: BlocksBufferGeometryData): void {
+    const { positions, normals, uvs, colors, indices, lightLevels, foamLevels, foamLevelsDiag } = data;
+    (geometry.attributes.position as import('three').BufferAttribute).array.set(positions);
+    (geometry.attributes.position as import('three').BufferAttribute).needsUpdate = true;
+    (geometry.attributes.normal as import('three').BufferAttribute).array.set(normals);
+    (geometry.attributes.normal as import('three').BufferAttribute).needsUpdate = true;
+    (geometry.attributes.uv as import('three').BufferAttribute).array.set(uvs);
+    (geometry.attributes.uv as import('three').BufferAttribute).needsUpdate = true;
+    (geometry.attributes.color as import('three').BufferAttribute).array.set(colors);
+    (geometry.attributes.color as import('three').BufferAttribute).needsUpdate = true;
+    if (lightLevels && geometry.attributes.lightLevel) {
+      (geometry.attributes.lightLevel as import('three').BufferAttribute).array.set(lightLevels);
+      (geometry.attributes.lightLevel as import('three').BufferAttribute).needsUpdate = true;
+    }
+    if (foamLevels && geometry.attributes.foamLevel) {
+      (geometry.attributes.foamLevel as import('three').BufferAttribute).array.set(foamLevels);
+      (geometry.attributes.foamLevel as import('three').BufferAttribute).needsUpdate = true;
+    }
+    if (foamLevelsDiag && geometry.attributes.foamLevelDiag) {
+      (geometry.attributes.foamLevelDiag as import('three').BufferAttribute).array.set(foamLevelsDiag);
+      (geometry.attributes.foamLevelDiag as import('three').BufferAttribute).needsUpdate = true;
+    }
+    if (geometry.index) {
+      (geometry.index as import('three').BufferAttribute).array.set(indices);
+      (geometry.index as import('three').BufferAttribute).needsUpdate = true;
+    }
+    geometry.computeBoundingSphere();
+  }
+
+  private _removeMesh(id: BatchId, cache: Map<BatchId, Mesh>, isFoliage = false): void {
+    const mesh = cache.get(id);
     if (mesh) {
-      if (mesh.parent) {
+      if (!isFoliage && mesh.parent) {
         this._solidMeshesInSceneDirty = true;
       }
       mesh.geometry.dispose();
       cache.delete(id);
-      this._game.renderer.removeFromScene(mesh);
+      if (isFoliage) {
+        this._game.renderer.removeFromFoliageScene(mesh);
+      } else {
+        this._game.renderer.removeFromScene(mesh);
+      }
+    }
+  }
+
+  private _setFoliageMeshInScene(mesh: Mesh, inScene: boolean): void {
+    const isInScene = mesh.parent !== null;
+    if (inScene && !isInScene) {
+      this._game.renderer.addToFoliageScene(mesh);
+    } else if (!inScene && isInScene) {
+      this._game.renderer.removeFromFoliageScene(mesh);
     }
   }
 
@@ -147,6 +162,20 @@ export default class ChunkMeshManager {
     );
   }
 
+  public createOrUpdateBatchFoliageMesh(batchId: BatchId, data: BlocksBufferGeometryData): void {
+    this._createOrUpdateMesh(
+      batchId,
+      data,
+      this._batchFoliageMeshes,
+      !!data.lightLevels ? this._game.blockMaterialManager.opaqueMaterial : this._game.blockMaterialManager.opaqueNonLitMaterial,
+    );
+  }
+
+  public removeBatchFoliageMesh(batchId: BatchId): void {
+    this._removeMesh(batchId, this._batchFoliageMeshes, true);
+    this._cleanupBatchId(batchId);
+  }
+
   public removeBatchLiquidMesh(batchId: BatchId): void {
     this._removeMesh(batchId, this._batchLiquidMeshes);
     this._cleanupBatchId(batchId);
@@ -166,29 +195,36 @@ export default class ChunkMeshManager {
     this._removeMesh(batchId, this._batchLiquidMeshes);
     this._removeMesh(batchId, this._batchOpaqueSolidMeshes);
     this._removeMesh(batchId, this._batchTransparentSolidMeshes);
+    this._removeMesh(batchId, this._batchFoliageMeshes, true);
     this._batchIds.delete(batchId);
   }
 
   private _cleanupBatchId(batchId: BatchId): void {
-    // Only remove from tracking if no meshes exist for this batch
-    if (!this._batchLiquidMeshes.has(batchId) && 
-        !this._batchOpaqueSolidMeshes.has(batchId) && 
-        !this._batchTransparentSolidMeshes.has(batchId)) {
+    if (!this._batchLiquidMeshes.has(batchId) &&
+        !this._batchOpaqueSolidMeshes.has(batchId) &&
+        !this._batchTransparentSolidMeshes.has(batchId) &&
+        !this._batchFoliageMeshes.has(batchId)) {
       this._batchIds.delete(batchId);
     }
   }
 
-  public applyBatchViewDistance(fromVec2: Vector2, viewDistanceSquared: number): void {
+  public applyBatchViewDistance(
+    fromVec2: Vector2,
+    viewDistanceSquared: number,
+    overFaceLimit?: boolean,
+    occlusionVisibleBatches?: Set<string> | null,
+  ): void {
+    const effectiveViewDistSq = overFaceLimit ? viewDistanceSquared * 0.25 : viewDistanceSquared;
+    const useOcclusion = overFaceLimit && occlusionVisibleBatches && occlusionVisibleBatches.size > 0;
+
     for (const batchId of this._batchIds) {
       const liquidMesh = this._batchLiquidMeshes.get(batchId);
       const opaqueSolidMesh = this._batchOpaqueSolidMeshes.get(batchId);
       const transparentSolidMesh = this._batchTransparentSolidMeshes.get(batchId);
+      const foliageMesh = this._batchFoliageMeshes.get(batchId);
 
-      if (!liquidMesh && !opaqueSolidMesh && !transparentSolidMesh) {
-        continue;
-      }
+      if (!liquidMesh && !opaqueSolidMesh && !transparentSolidMesh && !foliageMesh) continue;
 
-      // Use batch center for distance calculation
       const batchOrigin = Chunk.batchIdToBatchOrigin(batchId);
       const halfBatchSize = BATCH_WORLD_SIZE / 2;
       batchCenterVec3.set(
@@ -196,24 +232,15 @@ export default class ChunkMeshManager {
         batchOrigin.y + halfBatchSize,
         batchOrigin.z + halfBatchSize,
       );
+      const inRange = fromVec2.distanceToSquared(toVec2.set(batchCenterVec3.x, batchCenterVec3.z)) <= effectiveViewDistSq;
+      const visible = useOcclusion ? inRange && occlusionVisibleBatches.has(batchId) : inRange;
 
-      // Use squared distance to avoid expensive sqrt
-      const inRange = fromVec2.distanceToSquared(toVec2.set(batchCenterVec3.x, batchCenterVec3.z)) <= viewDistanceSquared;
+      if (liquidMesh) this._setMeshInScene(liquidMesh, visible);
+      if (opaqueSolidMesh) this._setMeshInScene(opaqueSolidMesh, visible);
+      if (transparentSolidMesh) this._setMeshInScene(transparentSolidMesh, visible);
+      if (foliageMesh) this._setFoliageMeshInScene(foliageMesh, visible);
 
-      // Add/remove from scene graph instead of just toggling visibility
-      if (liquidMesh) {
-        this._setMeshInScene(liquidMesh, inRange);
-      }
-      if (opaqueSolidMesh) {
-        this._setMeshInScene(opaqueSolidMesh, inRange);
-      }
-      if (transparentSolidMesh) {
-        this._setMeshInScene(transparentSolidMesh, inRange);
-      }
-
-      if (inRange) {
-        ChunkStats.visibleCount++;
-      }
+      if (visible) ChunkStats.visibleCount++;
     }
   }
 
@@ -260,20 +287,16 @@ export default class ChunkMeshManager {
       const liquidMesh = this._batchLiquidMeshes.get(batchId);
       const opaqueSolidMesh = this._batchOpaqueSolidMeshes.get(batchId);
       const transparentSolidMesh = this._batchTransparentSolidMeshes.get(batchId);
+      const foliageMesh = this._batchFoliageMeshes.get(batchId);
 
-      if (!liquidMesh && !opaqueSolidMesh && !transparentSolidMesh) {
+      if (!liquidMesh && !opaqueSolidMesh && !transparentSolidMesh && !foliageMesh) {
         continue;
       }
 
-      if (liquidMesh) {
-        this._setMeshInScene(liquidMesh, true);
-      }
-      if (opaqueSolidMesh) {
-        this._setMeshInScene(opaqueSolidMesh, true);
-      }
-      if (transparentSolidMesh) {
-        this._setMeshInScene(transparentSolidMesh, true);
-      }
+      if (liquidMesh) this._setMeshInScene(liquidMesh, true);
+      if (opaqueSolidMesh) this._setMeshInScene(opaqueSolidMesh, true);
+      if (transparentSolidMesh) this._setMeshInScene(transparentSolidMesh, true);
+      if (foliageMesh) this._setFoliageMeshInScene(foliageMesh, true);
 
       ChunkStats.visibleCount++;
     }

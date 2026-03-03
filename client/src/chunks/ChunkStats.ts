@@ -7,6 +7,10 @@ export default class ChunkStats {
   public static liquidFaceCount: number = 0;
   public static blockTextureCount: number = 0;
 
+  public static get totalFaceCount(): number {
+    return this.opaqueFaceCount + this.transparentFaceCount + this.liquidFaceCount;
+  }
+
   public static reset(): void {
     ChunkStats.visibleCount = 0;
   }

@@ -1,18 +1,24 @@
 import {
   startServer,
   BaseEntityControllerEvent,
+  ChunkLatticeEvent,
+  ColliderShape,
   DefaultPlayerEntity,
   DefaultPlayerEntityController,
+  Entity,
   Player,
   PlayerEvent,
+  PlayerUIEvent,
   ProceduralChunkProvider,
   PersistenceChunkProvider,
+  RigidBodyType,
   World,
   WorldLoopEvent,
   type WorldMap,
 } from './';
 
 import { sampleSurfaceHeight } from './worlds/maps/TerrainGenerator';
+import { sampleBiome } from './worlds/maps/Biomes';
 import FlyablePlayerEntityController from './playground/FlyablePlayerEntityController';
 import worldMap from '../../assets/release/maps/boilerplate-small.json';
 
@@ -57,6 +63,17 @@ startServer(defaultWorld => {
       { id: 20, name: 'iron-ore', textureUri: 'blocks/iron-ore.png', isCustom: false, isMultiTexture: false },
       { id: 21, name: 'gold-ore', textureUri: 'blocks/gold-ore.png', isCustom: false, isMultiTexture: false },
       { id: 22, name: 'diamond-ore', textureUri: 'blocks/diamond-ore.png', isCustom: false, isMultiTexture: false },
+      { id: 23, name: 'snow', textureUri: 'blocks/snow.png', isCustom: false, isMultiTexture: false },
+      { id: 24, name: 'grass-snow-block', textureUri: 'blocks/grass-snow-block', isCustom: false, isMultiTexture: true },
+      { id: 25, name: 'cobblestone-snow', textureUri: 'blocks/cobblestone-snow', isCustom: false, isMultiTexture: true },
+      { id: 26, name: 'snow-rocky', textureUri: 'blocks/snow-rocky.png', isCustom: false, isMultiTexture: false },
+      { id: 27, name: 'sandstone', textureUri: 'blocks/sandstone', isCustom: false, isMultiTexture: true },
+      { id: 28, name: 'mossy-cobblestone', textureUri: 'blocks/mossy-cobblestone.png', isCustom: false, isMultiTexture: false },
+      { id: 29, name: 'hay-block', textureUri: 'blocks/hay-block', isCustom: false, isMultiTexture: true },
+      { id: 30, name: 'birch-log', textureUri: 'blocks/birch-log', isCustom: false, isMultiTexture: true },
+      { id: 31, name: 'farmland', textureUri: 'blocks/farmland', isCustom: false, isMultiTexture: true },
+      { id: 32, name: 'lava', textureUri: 'blocks/lava.png', isCustom: false, isMultiTexture: false, isLiquid: true },
+      { id: 33, name: 'magma-block', textureUri: 'blocks/magma-block.png', isCustom: false, isMultiTexture: false },
     ];
     const blockTypes = [...baseBlockTypes, ...proceduralBlockTypes];
     defaultWorld.loadMap({
@@ -75,6 +92,75 @@ startServer(defaultWorld => {
       ? new PersistenceChunkProvider('./world-data', procedural)
       : procedural;
     defaultWorld.chunkLattice.setChunkProvider(provider);
+
+    // Spawn environmental entities (cactus, dry-bush, grass-tall) in procedural chunks
+    const chunkEnvironmentalEntities = new Map<string, Entity[]>();
+    const CACTUS_DENSITY = 0.035;
+    const DRY_BUSH_DENSITY = 0.055;
+    const GRASS_TALL_DENSITY = 0.10;
+    const SNOWY_FIR_DENSITY = 0.03;
+    const SNOWY_ROCK_DENSITY = 0.04;
+
+    function hashEnv(gx: number, gz: number, seed: number): number {
+      let h = seed;
+      h = Math.imul(h ^ gx, 0x85ebca6b);
+      h = Math.imul(h ^ gz, 0x27d4eb2d);
+      return (h ^ (h >>> 16)) >>> 0;
+    }
+
+    function spawnEnvEntity(modelUri: string, name: string, world: World, gx: number, surfaceY: number, gz: number): Entity {
+      const e = new Entity({
+        name,
+        modelUri,
+        isEnvironmental: true,
+        modelPreferredShape: ColliderShape.NONE,
+        rigidBodyOptions: { type: RigidBodyType.FIXED },
+      });
+      e.spawn(world, { x: gx + 0.5, y: surfaceY + 1, z: gz + 0.5 });
+      return e;
+    }
+
+    defaultWorld.on(ChunkLatticeEvent.ADD_CHUNK, ({ chunk }) => {
+      const ox = chunk.originCoordinate.x;
+      const oy = chunk.originCoordinate.y;
+      const oz = chunk.originCoordinate.z;
+      const chunkKey = `${ox},${oy},${oz}`;
+      const entities: Entity[] = [];
+
+      for (let lz = 0; lz < 16; lz++) {
+        for (let lx = 0; lx < 16; lx++) {
+          const gx = ox + lx;
+          const gz = oz + lz;
+          const biome = sampleBiome(gx, gz, { seed: TERRAIN_OPTIONS.seed });
+          const surfaceY = sampleSurfaceHeight(gx, gz, TERRAIN_OPTIONS);
+          if (surfaceY < oy || surfaceY >= oy + 16) continue;
+
+          if (biome.id === 'desert') {
+            if ((hashEnv(gx, gz, TERRAIN_OPTIONS.seed + 5555) % 100) / 100 < CACTUS_DENSITY) {
+              entities.push(spawnEnvEntity('models/environment/Desert/cactus.gltf', 'cactus', defaultWorld, gx, surfaceY, gz));
+            }
+            if ((hashEnv(gx, gz, TERRAIN_OPTIONS.seed + 6666) % 100) / 100 < DRY_BUSH_DENSITY) {
+              entities.push(spawnEnvEntity('models/environment/Desert/dry-bush.gltf', 'dry-bush', defaultWorld, gx, surfaceY, gz));
+            }
+          } else if (biome.id === 'plains' || biome.id === 'forest') {
+            if ((hashEnv(gx, gz, TERRAIN_OPTIONS.seed + 7777) % 100) / 100 < GRASS_TALL_DENSITY) {
+              entities.push(spawnEnvEntity('models/environment/Plains/grass-tall.gltf', 'grass-tall', defaultWorld, gx, surfaceY, gz));
+            }
+          }
+        }
+      }
+
+      if (entities.length > 0) chunkEnvironmentalEntities.set(chunkKey, entities);
+    });
+
+    defaultWorld.on(ChunkLatticeEvent.REMOVE_CHUNK, ({ chunk }) => {
+      const chunkKey = `${chunk.originCoordinate.x},${chunk.originCoordinate.y},${chunk.originCoordinate.z}`;
+      const entities = chunkEnvironmentalEntities.get(chunkKey);
+      if (entities) {
+        for (const e of entities) e.despawn();
+        chunkEnvironmentalEntities.delete(chunkKey);
+      }
+    });
 
     // Preload chunks around spawn (including higher for mountains/trees)
     for (let cx = -SPAWN_PRELOAD_RADIUS; cx <= SPAWN_PRELOAD_RADIUS; cx++) {
@@ -154,6 +240,19 @@ function playerJoinedWorld({ player, world }: { player: Player, world: World }) 
   const surfaceY = sampleSurfaceHeight(SPAWN_X, SPAWN_Z, TERRAIN_OPTIONS);
   const spawnY = Math.max(surfaceY + 1, 32);
   playerEntity.spawn(world, { x: SPAWN_X, y: spawnY, z: SPAWN_Z });
+
+  // Teleport via DebugPanel or UI: adjust x,y,z and send { type: 'teleport', x, y, z }
+  player.ui.on(PlayerUIEvent.DATA, ({ data }) => {
+    if (data?.type === 'teleport' && data.x != null && data.y != null && data.z != null) {
+      const x = Number(data.x);
+      const y = Number(data.y);
+      const z = Number(data.z);
+      if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+        playerEntity.setPosition({ x, y, z });
+        playerEntity.setLinearVelocity({ x: 0, y: 0, z: 0 }); // Stop drift from carry-over velocity
+      }
+    }
+  });
 
   // Block placement/removal for testing
   const controller = playerEntity.controller as DefaultPlayerEntityController;

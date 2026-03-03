@@ -11,18 +11,18 @@
 ## Optimization Opportunities
 
 ### 1. **Performance Profiling**
-- [ ] Add tick-time logging to find bottlenecks (chunk gen vs physics vs networking)
+- [x] Add tick-time logging (chunk count + last tick ms every 5 sec when `DEBUG_CHUNK_STATS`)
 - [ ] Profile `TerrainGenerator` and `ProceduralChunkProvider` under load
 - [ ] Measure memory per chunk and set target max chunk count
 
 ### 2. **Chunk Loading**
-- [ ] **Prioritize by view direction:** Load chunks in front of player first
+- [x] **Prioritize by view direction:** Load chunks in front of player first (dot product with camera facing)
 - [ ] **Async generation:** Move chunk generation off main tick (worker/async)
 - [ ] **LOD or reduced-detail far chunks:** Optional lower-poly far chunks
-- [ ] **Tune CHUNKS_PER_TICK:** Test 4/8/16 for smoothness vs load speed
+- [x] **Tune CHUNKS_PER_TICK:** Set to 12 (prioritization allows slightly higher without hitches)
 
 ### 3. **Chunk Unloading**
-- [ ] **Grace period:** Delay unload for chunks recently left (reduce re-loads)
+- [x] **Grace period:** 90-tick delay before unload (chunks must be out of range 1.5s)
 - [ ] **Batch collider removal:** Unload chunks in smaller batches to smooth physics updates
 - [ ] **Background persist:** Ensure `PersistenceChunkProvider.persistChunk` is non-blocking
 

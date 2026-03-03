@@ -89,6 +89,10 @@ export default class ChunkRegistry {
     }
   }
 
+  public getBatchIds(): BatchId[] {
+    return Array.from(this._batches.keys());
+  }
+
   public getBatchChunkIds(batchId: BatchId): ChunkId[] {
     const batch = this._batches.get(batchId);
     return batch ? Array.from(batch.chunkIds) : [];

@@ -91,6 +91,7 @@ export const QUALITY_PRESETS: Record<string, QualityPerfTradeoff> = {
       distance: 80,
       fog: { enabled: true, far: 72, near: 20 },
     },
+    fpsCap: 45,
     environmentalAnimations: {
       enabled: false,
     },
@@ -101,6 +102,7 @@ export const QUALITY_PRESETS: Record<string, QualityPerfTradeoff> = {
     },
   },
   LOW: {
+    fpsCap: 30,
     // In performance-prioritized settings, setting antialias to false is preferable as it reduces
     // GPU load. However, there is currently a crash issue on mobile platforms that appears to be
     // triggered during WebGL renderer recreation. Since the current implementation recreates

@@ -1,6 +1,7 @@
 import { Vector2, Vector3, Vector3Like } from 'three';
 import Chunk from './Chunk';
-import { BatchId, ChunkId } from './ChunkConstants';
+import { BatchId, ChunkId, LOD0_DISTANCE, LOD1_DISTANCE, LOD_REFRESH_INTERVAL, MAX_TOTAL_BLOCKS, MAX_TOTAL_FACES, OCCLUSION_UPDATE_INTERVAL, UNDERGROUND_Y_THRESHOLD } from './ChunkConstants';
+import OcclusionCuller from './OcclusionCuller';
 import ChunkRegistry from './ChunkRegistry';
 import ChunkStats from './ChunkStats';
 import { BlockId, WATER_SURFACE_Y_OFFSET } from '../blocks/BlockConstants';
@@ -33,9 +34,15 @@ export default class ChunkManager {
   private _game: Game;
   private _registry: ChunkRegistry = new ChunkRegistry();
   private _firstChunkBatchBuilt: boolean = false;
+  private _batchLodLevel: Map<BatchId, number> = new Map();
+  private _lodRefreshCounter: number = 0;
+  private _occlusionCuller: OcclusionCuller;
+  private _occlusionVisibleBatches: Set<BatchId> | null = null;
+  private _occlusionCounter: number = 0;
 
   public constructor(game: Game) {
     this._game = game;
+    this._occlusionCuller = new OcclusionCuller(this._registry, game.blockTypeManager);
     this._setupEventListeners();
   }
 
@@ -68,13 +75,7 @@ export default class ChunkManager {
   private _onAnimate = (_payload: RendererEventPayload.IAnimate): void => {
     ChunkStats.reset();
 
-    // Distance View feature: Reduces rendering load by making distant batches invisible.
-    // Optimization hints for future improvements: Calculating the distance between all
-    // batches and the camera every frame might be costly. Consider recalculating only
-    // when camera or batch information changes, using a partitioning approach like
-    // Octree, or spreading batch checks across multiple frames.
     if (!this._game.settingsManager.qualityPerfTradeoff.viewDistance.enabled) {
-      // When view distance is disabled, ensure all batch meshes are in the scene
       this._game.chunkMeshManager.addAllBatchMeshesToScene();
       return;
     }
@@ -82,10 +83,59 @@ export default class ChunkManager {
     const viewDistance = this._game.renderer.viewDistance;
     const viewDistanceSquared = viewDistance * viewDistance;
     const cameraPos = this._game.camera.activeCamera.position;
+    const cameraVec2 = fromVec2.set(cameraPos.x, cameraPos.z);
+    const overFaceLimit = ChunkStats.totalFaceCount > MAX_TOTAL_FACES || ChunkStats.blockCount >= MAX_TOTAL_BLOCKS;
 
-    // Distance is calculated ignoring the Y-axis (Up direction) to process distant batches
-    // without regard to elevation, aiming for a more natural appearance.
-    this._game.chunkMeshManager.applyBatchViewDistance(fromVec2.set(cameraPos.x, cameraPos.z), viewDistanceSquared);
+    if (overFaceLimit) {
+      this._occlusionCounter++;
+      if (this._occlusionVisibleBatches === null || this._occlusionCounter >= OCCLUSION_UPDATE_INTERVAL) {
+        this._occlusionCounter = 0;
+        this._occlusionVisibleBatches = this._occlusionCuller.computeVisibleBatches(cameraPos, viewDistanceSquared);
+      }
+    } else {
+      this._occlusionVisibleBatches = null;
+    }
+
+    this._game.chunkMeshManager.applyBatchViewDistance(
+      cameraVec2,
+      viewDistanceSquared,
+      overFaceLimit,
+      this._occlusionVisibleBatches,
+    );
+
+    this._lodRefreshCounter++;
+    if (this._lodRefreshCounter >= LOD_REFRESH_INTERVAL) {
+      this._lodRefreshCounter = 0;
+      this._refreshLodForNearbyBatches(cameraVec2);
+    }
+  }
+
+  private _getLodLevelForDistance(distXZ: number): number {
+    if (distXZ <= LOD0_DISTANCE) return 0;
+    if (distXZ <= LOD1_DISTANCE) return 1;
+    return 2;
+  }
+
+  private _refreshLodForNearbyBatches(cameraVec2: Vector2): void {
+    for (const batchId of this._registry.getBatchIds()) {
+      const chunkIds = this._registry.getBatchChunkIds(batchId);
+      if (chunkIds.length === 0) continue;
+      const origin = Chunk.batchIdToBatchOrigin(batchId);
+      const distXZ = cameraVec2.distanceTo(vec1.set(origin.x + 16, origin.z + 16));
+      let wantedLod = this._getLodLevelForDistance(distXZ);
+      if (origin.y + 16 < UNDERGROUND_Y_THRESHOLD) wantedLod = Math.min(2, wantedLod + 1);
+      const currentLod = this._batchLodLevel.get(batchId) ?? 0;
+      if (wantedLod !== currentLod) {
+        this._batchLodLevel.set(batchId, wantedLod);
+        const msg = {
+          type: 'chunk_batch_build' as const,
+          batchId,
+          chunkIds,
+          lodLevel: wantedLod,
+        };
+        this._game.chunkWorkerClient.postMessage(msg);
+      }
+    }
   }
 
   private _onBlocksPacket = (payload: NetworkManagerEventPayload.IBlocksPacket) => {
@@ -163,37 +213,41 @@ export default class ChunkManager {
       }
     });
 
-    // Build affected batches in order of proximity to the player
     const basePosition = this._game.camera.gameCameraAttachedEntity?.position || this._game.camera.activeCamera.position;
+    const cameraVec2 = fromVec2.set(basePosition.x, basePosition.z);
     
-    // Sort batches by distance to player
     const sortedBatches = Array.from(affectedBatches).sort((batchId1, batchId2) => {
       const origin1 = Chunk.batchIdToBatchOrigin(batchId1);
       const origin2 = Chunk.batchIdToBatchOrigin(batchId2);
       return vec1.copy(origin1).distanceToSquared(basePosition) - vec2.copy(origin2).distanceToSquared(basePosition);
     });
 
-    // Send batch build messages for affected batches
     sortedBatches.forEach(batchId => {
       const chunkIds = this._registry.getBatchChunkIds(batchId);
       
       if (chunkIds.length === 0) {
-        // Batch is now empty, remove its meshes
         this._game.chunkMeshManager.removeAllBatchMeshes(batchId);
+        this._batchLodLevel.delete(batchId);
         return;
       }
+
+      const origin = Chunk.batchIdToBatchOrigin(batchId);
+      const distXZ = cameraVec2.distanceTo(vec1.set(origin.x + 16, origin.z + 16));
+      const lodLevel = this._getLodLevelForDistance(distXZ);
+      this._batchLodLevel.set(batchId, lodLevel);
 
       const message: ChunkWorkerChunkBatchBuildMessage = {
         type: 'chunk_batch_build',
         batchId,
         chunkIds,
+        lodLevel,
       };
       this._game.chunkWorkerClient.postMessage(message);
     });
   }
 
   private _onChunkBatchBuilt = (payload: WorkerEventPayload.IChunkBatchBuilt): void => {
-    const { batchId, chunkIds, liquidGeometry, opaqueSolidGeometry, transparentSolidGeometry, blockCount } = payload;
+    const { batchId, chunkIds, liquidGeometry, opaqueSolidGeometry, transparentSolidGeometry, foliageGeometry, blockCount } = payload;
 
     // Verify at least one chunk in the batch still exists
     const validChunkIds = chunkIds.filter(chunkId => this._registry.getChunk(chunkId));
@@ -227,6 +281,12 @@ export default class ChunkManager {
       this._game.chunkMeshManager.createOrUpdateBatchTransparentSolidMesh(batchId, transparentSolidGeometry);
     } else {
       this._game.chunkMeshManager.removeBatchTransparentSolidMesh(batchId);
+    }
+
+    if (foliageGeometry) {
+      this._game.chunkMeshManager.createOrUpdateBatchFoliageMesh(batchId, foliageGeometry);
+    } else {
+      this._game.chunkMeshManager.removeBatchFoliageMesh(batchId);
     }
 
     // Update batch metadata

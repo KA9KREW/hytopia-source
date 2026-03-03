@@ -42,6 +42,7 @@ import {
 } from '../blocks/BlockConstants';
 import BlockType from '../blocks/BlockType';
 import BlockTypeRegistry from '../blocks/BlockTypeRegistry';
+import { isBlockInTheme } from '../blocks/BlockThemes';
 import Chunk from '../chunks/Chunk';
 import type { LightSource } from '../chunks/Chunk';
 import {
@@ -439,15 +440,13 @@ class ChunkWorker {
   };
 
   private _onChunkBatchBuild = (message: ChunkWorkerChunkBatchBuildMessage): Promise<void> => {
-    this._buildChunkBatchGeometries(message.batchId, message.chunkIds);
-    // Yield control to process accumulated messages and allow blocks_update merging
-    // after potentially long-running geometry build operations
+    this._buildChunkBatchGeometries(message.batchId, message.chunkIds, message.lodLevel ?? 0);
     return new Promise(resolve => setTimeout(resolve, 0));
   };
 
-  private _buildChunkBatchGeometries(batchId: BatchId, chunkIds: ChunkId[]): void {
-    const { liquidGeometry, opaqueSolidGeometry, transparentSolidGeometry, blockCount, lightLevelVolumes, skyDistanceVolumes } =
-      this._createChunkBatchGeometries(batchId, chunkIds);
+  private _buildChunkBatchGeometries(batchId: BatchId, chunkIds: ChunkId[], lodLevel: number = 0): void {
+    const { liquidGeometry, opaqueSolidGeometry, transparentSolidGeometry, foliageGeometry, blockCount, lightLevelVolumes, skyDistanceVolumes } =
+      this._createChunkBatchGeometries(batchId, chunkIds, lodLevel);
 
     const geometries: BlocksBufferGeometryData[] = [];
     if (liquidGeometry) {
@@ -459,6 +458,9 @@ class ChunkWorker {
     if (transparentSolidGeometry) {
       geometries.push(transparentSolidGeometry);
     }
+    if (foliageGeometry) {
+      geometries.push(foliageGeometry);
+    }
 
     // Always send the chunk_batch_built message, even if empty (to handle removal case)
     const sendMessage: ChunkWorkerChunkBatchBuiltMessage = {
@@ -468,6 +470,7 @@ class ChunkWorker {
       liquidGeometry,
       opaqueSolidGeometry,
       transparentSolidGeometry,
+      foliageGeometry,
       blockCount,
     };
     self.postMessage(sendMessage, this._collectTransferableObjectsFromGeometryDataArray(geometries));
@@ -687,10 +690,11 @@ class ChunkWorker {
     return needsRemesh;
   }
 
-  private _createChunkBatchGeometries(batchId: BatchId, chunkIds: ChunkId[]): {
+  private _createChunkBatchGeometries(batchId: BatchId, chunkIds: ChunkId[], lodLevel: number = 0): {
     liquidGeometry?: BlocksBufferGeometryData,
     opaqueSolidGeometry?: BlocksBufferGeometryData,
     transparentSolidGeometry?: BlocksBufferGeometryData,
+    foliageGeometry?: BlocksBufferGeometryData,
     lightLevelVolumes: Map<ChunkId, Uint8Array | undefined>,
     skyDistanceVolumes: Map<ChunkId, Uint8Array>,
     blockCount: number,
@@ -754,6 +758,14 @@ class ChunkWorker {
     const transparentSolidMeshLightLevels: number[] = [];
     let transparentSolidMeshHasLightLevel = false;
 
+    const foliageMeshColors: number[] = [];
+    const foliageMeshIndices: number[] = [];
+    const foliageMeshNormals: number[] = [];
+    const foliageMeshPositions: number[] = [];
+    const foliageMeshUvs: number[] = [];
+    const foliageMeshLightLevels: number[] = [];
+    let foliageMeshHasLightLevel = false;
+
     // Process each chunk in the batch
     for (const chunkId of chunkIds) {
       const chunk = this._chunkRegistry.getChunk(chunkId);
@@ -769,11 +781,12 @@ class ChunkWorker {
       // Build SkyDistanceVolume for this chunk
       const { skyDistanceVolume, skyBoundaryVolume } = this._buildSkyDistanceVolume(chunk);
 
-      for (let y = 0; y < CHUNK_SIZE; y++) {
+      const step = 1 << Math.min(lodLevel, 2);
+      for (let y = 0; y < CHUNK_SIZE; y += step) {
         const globalY = originY + y;
-        for (let z = 0; z < CHUNK_SIZE; z++) {
+        for (let z = 0; z < CHUNK_SIZE; z += step) {
           const globalZ = originZ + z;
-          for (let x = 0; x < CHUNK_SIZE; x++) {
+          for (let x = 0; x < CHUNK_SIZE; x += step) {
             const globalX = originX + x;
 
             const lightLevel = this._calculateLightLevel(globalX, globalY, globalZ, nearbyLightSources) & 0xF;
@@ -824,12 +837,13 @@ class ChunkWorker {
                 const textureUri = blockType.textureUris[blockFace];
                 const isTransparent = this._textureAtlasManager.isTextureTransparent(textureUri);
 
-                const meshPositions = isTransparent ? transparentSolidMeshPositions : opaqueSolidMeshPositions;
-                const meshNormals = isTransparent ? transparentSolidMeshNormals : opaqueSolidMeshNormals;
-                const meshUvs = isTransparent ? transparentSolidMeshUvs : opaqueSolidMeshUvs;
-                const meshColors = isTransparent ? transparentSolidMeshColors : opaqueSolidMeshColors;
-                const meshIndices = isTransparent ? transparentSolidMeshIndices : opaqueSolidMeshIndices;
-                const meshLightLevels = isTransparent ? transparentSolidMeshLightLevels : opaqueSolidMeshLightLevels;
+                const isFoliage = isBlockInTheme(blockType, 'foliage');
+                const meshPositions = isFoliage ? foliageMeshPositions : (isTransparent ? transparentSolidMeshPositions : opaqueSolidMeshPositions);
+                const meshNormals = isFoliage ? foliageMeshNormals : (isTransparent ? transparentSolidMeshNormals : opaqueSolidMeshNormals);
+                const meshUvs = isFoliage ? foliageMeshUvs : (isTransparent ? transparentSolidMeshUvs : opaqueSolidMeshUvs);
+                const meshColors = isFoliage ? foliageMeshColors : (isTransparent ? transparentSolidMeshColors : opaqueSolidMeshColors);
+                const meshIndices = isFoliage ? foliageMeshIndices : (isTransparent ? transparentSolidMeshIndices : opaqueSolidMeshIndices);
+                const meshLightLevels = isFoliage ? foliageMeshLightLevels : (isTransparent ? transparentSolidMeshLightLevels : opaqueSolidMeshLightLevels);
                 const ndx = meshPositions.length / 3;
 
                 // Apply rotation to vertices and normal for rendering
@@ -939,13 +953,16 @@ class ChunkWorker {
                 meshIndices.push(ndx, ndx + 1, ndx + 2);
 
                 if (lightLevel > 0) {
-                  if (isTransparent) transparentSolidMeshHasLightLevel = true;
+                  if (isFoliage) foliageMeshHasLightLevel = true;
+                  else if (isTransparent) transparentSolidMeshHasLightLevel = true;
                   else opaqueSolidMeshHasLightLevel = true;
                 }
               }
 
               continue;
             }
+
+            const isFoliageBlock = isBlockInTheme(blockType, 'foliage');
 
             for (const blockFace of blockType.faces) {
               const { normal: faceDir, vertices } = blockType.faceGeometries[blockFace];
@@ -1095,6 +1112,13 @@ class ChunkWorker {
                 meshPositions = liquidMeshPositions;
                 meshUvs = liquidMeshUvs;
                 meshLightLevels = liquidMeshLightLevels;
+              } else if (isFoliageBlock) {
+                meshColors = foliageMeshColors;
+                meshIndices = foliageMeshIndices;
+                meshNormals = foliageMeshNormals;
+                meshPositions = foliageMeshPositions;
+                meshUvs = foliageMeshUvs;
+                meshLightLevels = foliageMeshLightLevels;
               } else if (isTransparentTexture) {
                 meshColors = transparentSolidMeshColors;
                 meshIndices = transparentSolidMeshIndices;
@@ -1171,6 +1195,8 @@ class ChunkWorker {
               if (lightLevel > 0) {
                 if (blockType.isLiquid) {
                   liquidMeshHasLightLevel = true;
+                } else if (isFoliageBlock) {
+                  foliageMeshHasLightLevel = true;
                 } else if (isTransparentTexture) {
                   transparentSolidMeshHasLightLevel = true;
                 } else {
@@ -1214,6 +1240,14 @@ class ChunkWorker {
         positions: new Float32Array(transparentSolidMeshPositions),
         uvs: new Float32Array(transparentSolidMeshUvs),
         lightLevels: transparentSolidMeshHasLightLevel ? new Float32Array(transparentSolidMeshLightLevels) : undefined,
+      } : undefined,
+      foliageGeometry: foliageMeshPositions.length > 0 ? {
+        colors: new Float32Array(foliageMeshColors),
+        indices: this._createIndicesTypedArray(foliageMeshIndices, foliageMeshIndices[foliageMeshIndices.length - 1]),
+        normals: new Float32Array(foliageMeshNormals),
+        positions: new Float32Array(foliageMeshPositions),
+        uvs: new Float32Array(foliageMeshUvs),
+        lightLevels: foliageMeshHasLightLevel ? new Float32Array(foliageMeshLightLevels) : undefined,
       } : undefined,
       lightLevelVolumes,
       skyDistanceVolumes,

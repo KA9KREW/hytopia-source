@@ -54,6 +54,7 @@ export default class ChunkWorkerClient {
       liquidGeometry: message.liquidGeometry,
       opaqueSolidGeometry: message.opaqueSolidGeometry,
       transparentSolidGeometry: message.transparentSolidGeometry,
+      foliageGeometry: message.foliageGeometry,
       blockCount: message.blockCount,
     });
   };

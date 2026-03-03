@@ -113,6 +113,7 @@ export default class Renderer {
   // position. Separating the scenes helps prevent the scene graph from becoming too large
   // and reduces the cost of traversing the scene graph.
   private _scene: Scene;
+  private _foliageScene: Scene;
   private _viewModelScene: Scene;
   private _overlayScene: Scene;
   private _uiScene: Scene;
@@ -134,6 +135,7 @@ export default class Renderer {
   private _debugPanel: DebugPanel;
   private _effectComposer: EffectComposer;
   private _renderPass: RenderPass;
+  private _foliageRenderPass: RenderPass;
   private _viewModelRenderPass: RenderPass;
   private _outlinePass: SelectiveOutlinePass;
   private _smaaPass: SMAAPass;
@@ -148,6 +150,7 @@ export default class Renderer {
     this._renderer = new WebGLRenderer({ antialias: false });
     this._sceneUiRenderer = new CSS2DRenderer({ element: document.getElementById('scene-ui-container')! });
     this._scene = new Scene();
+    this._foliageScene = new Scene();
     this._viewModelScene = new Scene();
     this._overlayScene = new Scene();
     this._uiScene = new Scene();
@@ -162,6 +165,9 @@ export default class Renderer {
       type: HalfFloatType,
     }));
     this._renderPass = new RenderPass(this._scene, this._game.camera.activeCamera);
+    this._foliageRenderPass = new RenderPass(this._foliageScene, this._game.camera.activeCamera);
+    this._foliageRenderPass.clear = false;
+    this._foliageRenderPass.clearDepth = true;
     this._viewModelRenderPass = new RenderPass(this._viewModelScene, this._game.camera.activeCamera);
     this._viewModelRenderPass.clear = false;
     this._viewModelRenderPass.clearDepth = true;
@@ -205,6 +211,7 @@ export default class Renderer {
 
   private _setupPostProcessing(): void {
     this._effectComposer.addPass(this._renderPass);
+    this._effectComposer.addPass(this._foliageRenderPass);
     this._effectComposer.addPass(this._outlinePass);
     this._effectComposer.addPass(this._viewModelRenderPass);
     this._effectComposer.addPass(this._bloomPass);
@@ -225,6 +232,14 @@ export default class Renderer {
 
   public removeFromScene(object: Object3D): void {
     this._scene.remove(object);
+  }
+
+  public addToFoliageScene(object: Object3D): void {
+    this._foliageScene.add(object);
+  }
+
+  public removeFromFoliageScene(object: Object3D): void {
+    this._foliageScene.remove(object);
   }
 
   public addToUIScene(object: CSS2DObject): void {
@@ -297,6 +312,7 @@ export default class Renderer {
     const pp = this._game.settingsManager.qualityPerfTradeoff.postProcessing;
     if (pp?.outline || pp?.bloom || pp?.smaa) {
       this._renderPass.camera = this._game.camera.activeCamera;
+      this._foliageRenderPass.camera = this._game.camera.activeCamera;
       this._viewModelRenderPass.camera = this._game.camera.activeCamera;
       this._viewModelRenderPass.enabled = this._firstPersonViewModelEntity !== undefined;
       this._outlinePass.enabled = !!pp.outline;
@@ -313,6 +329,9 @@ export default class Renderer {
       }
     } else {
       this._renderer.render(this._scene, this._game.camera.activeCamera);
+      this._renderer.autoClear = false;
+      this._renderer.render(this._foliageScene, this._game.camera.activeCamera);
+      this._renderer.autoClear = true;
       this._renderFirstPersonViewModel();
     }
     this._renderScreenOverlays();
@@ -696,6 +715,7 @@ export default class Renderer {
       this._scene.fog = null;
     }
 
+    this._foliageScene.fog = this._scene.fog;
     this._viewModelScene.fog = this._scene.fog;
 
     this._interpolatingFogColor = false;
